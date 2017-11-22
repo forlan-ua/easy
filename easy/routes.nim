@@ -1,78 +1,10 @@
-import asynchttpserver, json
-import asyncdispatch, nre, sequtils, tables, strutils, logging
+import httpcore, tables, nre, strutils, asyncdispatch, logging, sequtils
+import types, response
 
+type RouteResult = tuple[listener: UrlListener, args: seq[string], kwargs: Table[string, string]]
 
-proc splitResults(captures: Captures): tuple[args: seq[string], kwargs: Table[string, string]] =
-    result.kwargs = captures.toTable()
+proc new*(T: typedesc[Router]): T = T(namedRoutes: initTable[string, Route]())
 
-    if result.kwargs.len > 0:
-        var args = captures.toSeq()
-
-        for key_str, key_int in captures.RegexMatch.pattern.captureNameId:
-            args[key_int] = nil
-
-        result.args = filter(args, proc(item: string): bool = not item.isNil)
-    else:
-        result.args = captures.toSeq()
-
-type HttpRequest = ref object of RootObj
-    originalRequest: Request
-    
-type HttpResponse = ref object of RootObj
-    request: HttpRequest
-    statusCode: HttpCode
-    headers: HttpHeaders
-
-proc close*(res: HttpResponse, content: string) {.async.} = 
-    await res.request.originalRequest.respond(res.statusCode, content, res.headers)
-
-proc close*(res: HttpResponse, content: JsonNode) {.async.} =
-    res.headers["Content-Type"] = "application/json"
-    await res.request.originalRequest.respond(res.statusCode, $content, res.headers)
-
-type UrlListener* = proc(request: HttpRequest, response: HttpResponse, args: seq[string], kwargs: Table[string, string]): Future[void]
-
-type 
-    Router = ref object of RootObj
-        defaultGroup: RouteGroup
-        namedRoutes: Table[string, Route]
-        trailingSlash: bool
-    Route = ref object of RootObj
-        name: string
-        reg: Regex
-        group: RouteGroup
-        case multiMethod: bool:
-            of false:
-                listeners: Table[HttpMethod, UrlListener]
-            else:
-                listener: UrlListener
-    RouteGroup = ref object of Route
-        routes: seq[Route]
-    RouteResult = tuple[listener: UrlListener, args: seq[string], kwargs: Table[string, string]]
-    
-
-proc newHttpRequest*(request: Request): HttpRequest = HttpRequest(originalRequest: request)
-proc newHttpResponse*(request: HttpRequest): HttpResponse = HttpResponse(request: request, statusCode: Http200, headers: newHttpHeaders())
-proc newRouter(): Router = Router(namedRoutes: initTable[string, Route]())
-
-
-proc listener404(request: HttpRequest, response: HttpResponse, args: seq[string], kwargs: Table[string, string]) {.async.} =
-    response.statusCode = Http404
-    await response.close("Not found")
-
-
-proc listener500(request: HttpRequest, response: HttpResponse) {.async.} =
-    response.statusCode = Http500
-    await response.close("Internal server error")
-
-
-proc `$`(r: Route): string = 
-    result = "{name: " & (if r.name == "": "empty" else: r.name)
-    if not r.reg.isNil:
-        result &= ", pattern: " & r.reg.pattern
-    if r of RouteGroup:
-        result &= ", routes: " & $r.RouteGroup.routes
-    result &= "}"
 
 proc checkReg(reg: string): Regex = 
     result = re(reg)
@@ -80,7 +12,7 @@ proc checkReg(reg: string): Regex =
 proc url*(reg: string, listener: UrlListener, name: string = ""): Route =
     Route(reg: checkReg(reg), name: name, listener: listener, multiMethod: true)
 
-proc url*(reg: string, listeners: openarray[tuple[httpMethod: HttpMethod, listener: UrlListener]], name: string = ""): Route =
+proc url*(reg: string, listeners: openarray[(HttpMethod, UrlListener)], name: string = ""): Route =
     Route(reg: checkReg(reg), name: name, listeners: listeners.toTable(), multiMethod: false)
 
 proc url_import*(urls: openarray[Route], namespace: string = ""): RouteGroup =
@@ -105,10 +37,28 @@ proc registerNames(router: Router, group: RouteGroup, prefix: string = "") =
 
 proc registerRoutes*(router: Router, urls: openarray[Route]) =
     var routes: seq[Route] = @[]
-    for route in urls:
-        routes.add(route)
+    routes.add(urls)
+
     router.defaultGroup = RouteGroup(name: "", routes: routes)
     router.registerNames(router.defaultGroup)
+
+
+proc splitResults(captures: Captures): tuple[args: seq[string], kwargs: Table[string, string]] =
+    result.kwargs = captures.toTable()
+
+    if result.kwargs.len > 0:
+        var args = captures.toSeq()
+
+        for key_str, key_int in captures.RegexMatch.pattern.captureNameId:
+            args[key_int] = nil
+
+        result.args = filter(args, proc(item: string): bool = not item.isNil)
+    else:
+        result.args = captures.toSeq()
+    
+    
+proc listener404(request: HttpRequest, response: HttpResponse, args: seq[string], kwargs: Table[string, string]) {.async, gcsafe.} =
+    response.send(Http404, "Not found")
 
 
 proc resolveUrl(group: RouteGroup, httpMethod: HttpMethod, url: string, args: var seq[string], kwargs: var Table[string, string]): RouteResult =
@@ -166,7 +116,6 @@ proc newReverseException(name: string, pattern: string = ""): ref Exception =
 
     result = newException(Exception, message)
 
-
 proc reverseUrl*(router: Router, name: string, args: seq[string], kwargs: Table[string, string]): string =
     let route = router.namedRoutes.getOrDefault(name)
 
@@ -178,10 +127,6 @@ proc reverseUrl*(router: Router, name: string, args: seq[string], kwargs: Table[
             group = group.group
 
         var url = pattern.strip(trailing = false, chars = {'^'}).strip(leading = false, chars = {'$'}).replace("/?", "/").replace("//", "/")
-        if not router.trailingSlash:
-            url = url.strip(leading = false, chars = {'/'})
-        elif not url.endsWith("/"):
-            url &= "/"
 
         result = ""
         var i = 0
@@ -242,56 +187,13 @@ proc reverseUrl*(router: Router, name: string, args: seq[string], kwargs: Table[
             i.inc
     else:
         raise newReverseException(name)
+    
 
-# template reverseUrl*(name: string, args: seq[string], kwargs: Table[string, string]): string = sharedRouter.reverseUrl(name, args, kwargs)
-# template reverseUrl*(name: string, args: seq[string]): string = sharedRouter.reverseUrl(name, args, initTable[string, string]())
-# template reverseUrl*(name: string, kwargs: Table[string, string]): string = sharedRouter.reverseUrl(name, @[], kwargs)
-# template reverseUrl*(name: string): string = sharedRouter.reverseUrl(name, @[], initTable[string, string]())
+proc reverseUrl*(server: HttpServer, name: string, args: seq[string], kwargs: Table[string, string]): string = server.router.reverseUrl(name, args, kwargs)
 
-# template reverseUrl*(name: string, args: seq[string], kwargs: openarray[tuple[key: string, value: string]]): string = sharedRouter.reverseUrl(name, args, kwargs.toTable())
-# template reverseUrl*(name: string, kwargs: openarray[tuple[key: string, value: string]]): string = sharedRouter.reverseUrl(name, @[], kwargs.toTable())
+template reverseUrl*(server: HttpServer, name: string, args: seq[string]): string = server.reverseUrl(name, args, initTable[string, string]())
+template reverseUrl*(server: HttpServer, name: string, kwargs: Table[string, string]): string = server.reverseUrl(name, @[], kwargs)
+template reverseUrl*(server: HttpServer, name: string): string = server.reverseUrl(name, @[], initTable[string, string]())
 
-
-type HttpServer = ref object of RootObj
-    asyncServer: AsyncHttpServer
-    port: Port
-    address: string
-    router: Router
-
-proc newHttpServer*(port: int = 5050, address: string = ""): HttpServer =
-    HttpServer(port: Port(port), address: address, router: newRouter())
-
-
-proc handle(server: HttpServer, req: Request) {.async.} =
-    var (listener, args, kwargs) = server.router.resolveUrl(req.reqMethod, req.url.path)
-    var request = newHttpRequest(req)
-    var response = newHttpResponse(request)
-
-    var action = listener(request, response, args, kwargs)
-    yield action
-    if action.failed:
-        await listener500(request, response)
-
-
-proc listen*(server: HttpServer, port: int = 0, address: string = "") =
-    if port > 0:
-        server.port = Port(port)
-    if address.len > 0:
-        server.address = address
-
-    server.asyncServer = newAsyncHttpServer(true, true)
-    waitFor server.asyncServer.serve(server.port, proc(req: Request) {.async.} = await server.handle(req), server.address)
-
-proc registerRoutes*(server: HttpServer, routes: openarray[Route]) =
-    server.router.registerRoutes(routes)
-
-proc my_handler(request: HttpRequest, response: HttpResponse, args: seq[string], kwargs: Table[string, string]) {.async.} =
-    await response.close("CLOSE")
-
-var routes = [
-    url("^/$", my_handler)
-]
-
-let server = newHttpServer()
-server.registerRoutes(routes)
-server.listen()
+template reverseUrl*(server: HttpServer, name: string, args: seq[string], kwargs: openarray[tuple[key: string, value: string]]): string = server.reverseUrl(name, args, kwargs.toTable())
+template reverseUrl*(server: HttpServer, name: string, kwargs: openarray[tuple[key: string, value: string]]): string = server.reverseUrl(name, @[], kwargs.toTable())
