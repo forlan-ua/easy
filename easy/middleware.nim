@@ -7,22 +7,22 @@ proc new*(T: typedesc[MiddlewareData]): MiddlewareData = T()
 method onInit*(middleware: Middleware, request: HttpRequest, response: HttpResponse): Future[(HttpRequest, HttpResponse)] {.base, async, gcsafe.} = result = (request, response)
 method onRequest*(middleware: Middleware, request: HttpRequest, response: HttpResponse) {.base, async, gcsafe.} = discard
 method onResponse*(middleware: Middleware, request: HttpRequest, response: HttpResponse) {.base, async, gcsafe.} = discard
-method onInterrupt*(middleware: Middleware, request: HttpRequest, response: HttpResponse) {.base, async, gcsafe.} = discard
+method onRespond*(middleware: Middleware, response: HttpResponse) {.base, async, gcsafe.} = discard
 
-proc getMiddlewareData*(r: HttpRequest | HttpResponse, T: typedesc[MiddlewareData]): T =
-    for d in r.middlewareData:
-        if d of T:
-            result = cast[T](d)
+
+proc getMiddlewareData*[T](t: T, D: typedesc[MiddlewareData]): D =
+    for d in t.middlewareData:
+        if d of D:
+            result = cast[D](d)
             break
 
-proc setMiddlewareData*[T](r: HttpRequest | HttpResponse, data: T) =
+proc setMiddlewareData*[T, D](t: T, data: D) =
     var index = -1
-    for i, d in r.middlewareData:
-        if d of T:
+    for i, d in t.middlewareData:
+        if d of D:
             index = i
-            return
+            break
     if index > -1:
-        r.middlewareData[index] = data
+        t.middlewareData[index] = data
     else:
-        r.middlewareData.add(data)
-    
+        t.middlewareData.add(data)

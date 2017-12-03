@@ -1,7 +1,7 @@
-import strutils, times, logging
+import strutils, times, logging, tables, asyncdispatch, httpcore
 import cookies, strtabs
 
-import .. / easy
+import .. / .. / easy
 import data
 
 const zeroTime* = fromSeconds(0.0)
@@ -10,94 +10,164 @@ const removeTime = fromSeconds(1.0)
 type CookieSameSite* {.pure.} = enum
     None, Strict, Lax
 
-type Cookie* = ref object
-    name*: string
-    value*: string
-    domain*: string
-    path*: string
-    expires*: Time
-    secure*: bool
-    httpOnly*: bool
-    maxAge*: uint
-    sameSite*: CookieSameSite
+type CookiesMiddleware* = ref object of Middleware
+    urlencoded*: bool
 
-proc new*(T: typedesc[Cookie], name, value: string, domain: string = "", 
+type 
+    CookiesData* = ref object of MiddlewareData
+        requestCookies*: TableRef[string, Cookie]
+        responseCookies*: TableRef[string, Cookie]
+
+    Cookie* = ref object
+        data: CookiesData
+        cName: string
+        cValue: string
+        cDomain: string
+        cPath: string
+        cExpires: Time
+        cSecure: bool
+        cHttpOnly: bool
+        cMaxAge: uint
+        cSameSite: CookieSameSite
+
+proc `$`*(c: Cookie, urlencoded: bool = false): string =
+    let expires = if c.cExpires != zeroTime: 
+        c.cExpires.getGMTime().format("ddd, dd MMM yyy HH:mm:ss") & " GMT" else: ""
+    let name = if urlencoded: c.cName.urlencode() else: c.cName
+    let value = if urlencoded: c.cValue.urlencode() else: c.cValue
+    result = setCookie(
+        name, value, domain = c.cDomain,
+        path = c.cPath, expires = expires, noName = true, 
+        secure = c.cSecure, httpOnly = c.cHttpOnly
+    )
+    if c.cMaxAge > 0.uint:
+        result.add("; Max-Age=")
+        result.add($c.cMaxAge)
+    if c.cSameSite != CookieSameSite.None:
+        result.add("; SameSite=")
+        result.add($c.cSameSite)
+
+proc new*(T: typedesc[Cookie], data: CookiesData, name, value: string, domain: string = "", 
          path: string = "", expires: Time = zeroTime, secure: bool = false,
          httpOnly: bool = false, maxAge: uint = 0, sameSite: CookieSameSite = CookieSameSite.None): Cookie =
 
     Cookie(
-        name: name, value: value, domain: domain, path: path, expires: expires,
-        secure: secure, httpOnly: httpOnly, maxAge: maxAge, sameSite: sameSite
+        data: data,
+        cName: name, cValue: value, cDomain: domain, cPath: path, cExpires: expires,
+        cSecure: secure, cHttpOnly: httpOnly, cMaxAge: maxAge, cSameSite: sameSite
     )
 
-proc clone*(c: Cookie, name: string = "", value: string = "", domain: string = "",
-            path: string = "", expires: Time = zeroTime, secure: bool = false,
-            httpOnly: bool = false, maxAge: uint = 0, sameSite: CookieSameSite = CookieSameSite.None): Cookie =
-    let name = if name == "": c.name else: name
-    let value = if value == "": c.value else: value
-    let domain = if domain == "": c.domain else: domain
-    let expires = if expires == zeroTime: c.expires else: expires
-    let secure = if not secure: c.secure else: secure
-    let httpOnly = if not httpOnly: c.httpOnly else: httpOnly
-    let maxAge = if maxAge == 0: c.maxAge else: maxAge
-    let sameSite = if sameSite == CookieSameSite.None: c.sameSite else: sameSite
-    Cookie.new(name, value, domain, path, expires, secure, httpOnly, maxAge, sameSite)
+proc clone*(c: Cookie, name: string = nil): Cookie =
+    Cookie(
+        data: c.data, cName: if name.isNil: c.cName else: name,
+        cValue: c.cValue, cDomain: c.cDomain, cPath: c.cPath, cExpires: c.cExpires,
+        cSecure: c.cSecure, cHttpOnly: c.cHttpOnly, cMaxAge: c.cMaxAge, cSameSite: c.cSameSite
+    )
 
-type CookiesMiddleware* = ref object of Middleware
-    urlencoded*: bool
-type CookiesData* = ref object of MiddlewareData
-    cookies: TableRef[string, Cookie]
-    locked: bool
-
-proc new*(T: typedesc[CookiesMiddleware], urlencoded: bool = false): CookiesMiddleware =
+proc new*(T: typedesc[CookiesMiddleware], urlencoded: bool = true): CookiesMiddleware =
     CookiesMiddleware(urlencoded: urlencoded)
-
-proc get*(d: CookiesData, n: string): Cookie =
-    result = d.cookies.getOrDefault(n)
-
-proc set*(d: CookiesData, c: Cookie): CookiesData {.discardable.} =
-    if d.locked:
-        warn "Unable to set request cookies"
-    else:
-        d.cookies[c.name] = c
+    
+proc setCookie*(d: CookiesData, c: Cookie): CookiesData {.discardable.} =
+    d.responseCookies[c.cName] = c
+    c.data = nil
     result = d
 
-proc del*(d: CookiesData, n: string): CookiesData {.discardable.} =
-    if d.locked:
-        warn "Unable to del from request cookies"
+proc name*(c: Cookie): string = c.cName
+proc value*(c: Cookie): string = c.cValue
+proc `value=`*(c: Cookie, value: string) =
+    if c.data.isNil:
+        c.cValue = value
     else:
-        var cookie = d.get(n)
-        if not cookie.isNil:
-            d.set(cookie.clone(expires = removeTime))
+        var cookie = c.clone()
+        cookie.cValue = value
+        c.data.setCookie(cookie)
+proc domain*(c: Cookie): string = c.cDomain
+proc `domain=`*(c: Cookie, domain: string) =
+    if c.data.isNil:
+        c.cDomain = domain
+    else:
+        var cookie = c.clone()
+        cookie.cDomain = domain
+        c.data.setCookie(cookie)
+proc path*(c: Cookie): string = c.cPath
+proc `path=`*(c: Cookie, path: string) =
+    if c.data.isNil:
+        c.cPath = path
+    else:
+        var cookie = c.clone()
+        cookie.cPath = path
+        c.data.setCookie(cookie)
+proc expires*(c: Cookie): Time = c.cExpires
+proc `expires=`*(c: Cookie, expires: Time) =
+    if c.data.isNil:
+        c.cExpires = expires
+    else:
+        var cookie = c.clone()
+        cookie.cExpires = expires
+        c.data.setCookie(cookie)
+proc secure*(c: Cookie): bool = c.cSecure
+proc `secure=`*(c: Cookie, secure: bool) =
+    if c.data.isNil:
+        c.cSecure = secure
+    else:
+        var cookie = c.clone()
+        cookie.cSecure = secure
+        c.data.setCookie(cookie)
+proc httpOnly*(c: Cookie): bool = c.cHttpOnly
+proc `httpOnly=`*(c: Cookie, httpOnly: bool) =
+    if c.data.isNil:
+        c.cHttpOnly = httpOnly
+    else:
+        var cookie = c.clone()
+        cookie.cHttpOnly = httpOnly
+        c.data.setCookie(cookie)
+proc maxAge*(c: Cookie): uint = c.cMaxAge
+proc `maxAge=`*(c: Cookie, maxAge: uint) =
+    if c.data.isNil:
+        c.cMaxAge = maxAge
+    else:
+        var cookie = c.clone()
+        cookie.cMaxAge = maxAge
+        c.data.setCookie(cookie)
+proc sameSite*(c: Cookie): CookieSameSite = c.cSameSite
+proc `sameSite=`*(c: Cookie, sameSite: CookieSameSite) =
+    if c.data.isNil:
+        c.cSameSite = sameSite
+    else:
+        var cookie = c.clone()
+        cookie.cSameSite = sameSite
+        c.data.setCookie(cookie)
+    
+proc getCookie*(d: CookiesData, n: string): Cookie =
+    result = d.responseCookies.getOrDefault(n)
+    if result.isNil:
+        result = d.requestCookies.getOrDefault(n)
+
+proc delCookie*(d: CookiesData, n: string): CookiesData {.discardable.} =
+    var cookie = d.getCookie(n)
+    if not cookie.isNil:
+        cookie.expires = removeTime
     result = d
 
 method onRequest(middleware: CookiesMiddleware, request: HttpRequest, response: HttpResponse) {.async, gcsafe.} = 
-    var requestData = CookiesData(cookies: newTable[string, Cookie](), locked: true)
+    var cookies = CookiesData(
+        requestCookies: newTable[string, Cookie](),
+        responseCookies: newTable[string, Cookie]()
+    )
     for key, value in request.headers.getOrDefault("Cookie").parseCookies():
         if middleware.urlencoded:
-            requestData.cookies[key] = Cookie.new(key, value.urldecode())
+            cookies.requestCookies[key] = Cookie.new(cookies, key.urldecode(), value.urldecode())
         else:
-            requestData.cookies[key] = Cookie.new(key, value)
-    var responseData = CookiesData(cookies: newTable[string, Cookie](), locked: false)
-    request.setMiddlewareData(requestData)
-    response.setMiddlewareData(responseData)
+            cookies.requestCookies[key] = Cookie.new(cookies, key, value)
+    request.setMiddlewareData(cookies)
+    response.setMiddlewareData(cookies)
 
-method onResponse(middleware: CookiesMiddleware, request: HttpRequest, response: HttpResponse) {.async, gcsafe.} = 
+method onRespond(middleware: CookiesMiddleware, response: HttpResponse) {.async, gcsafe.} = 
     let data = response.getMiddlewareData(CookiesData)
 
-    if data.cookies.len > 0:
-        for _, cookie in data.cookies:
-            let expires = if cookie.expires != zeroTime: 
-                cookie.expires.getGMTime().format("ddd, dd MMM yyy HH:mm:ss") & " GMT" else: ""
-            let value = if middleware.urlencoded: cookie.value.urlencode() else: cookie.value
-            var cookieString = setCookie(
-                cookie.name, value, domain = cookie.domain,
-                path = cookie.path, expires = expires, noName = true, 
-                secure = cookie.secure, httpOnly = cookie.httpOnly
-            )
-            if cookie.maxAge > 0.uint:
-                cookieString &= "; Max-Age=" & $cookie.maxAge
-            if cookie.sameSite != CookieSameSite.None:
-                cookieString &= "; SameSite=" & $cookie.sameSite
+    if data.responseCookies.len > 0:
+        for _, cookie in data.responseCookies:
+            response.headers.add("Set-Cookie", `$`(cookie, middleware.urlencoded))
 
-            response.headers.add("Set-Cookie", cookieString)
+    data.requestCookies = nil
+    data.responseCookies = nil

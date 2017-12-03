@@ -58,7 +58,7 @@ proc splitResults(captures: Captures): tuple[args: seq[string], kwargs: Table[st
     
     
 proc listener404(request: HttpRequest, response: HttpResponse, args: seq[string], kwargs: Table[string, string]) {.async, gcsafe.} =
-    response.send(Http404, "Not found")
+    response.code(Http404).send("Not found")
 
 
 proc resolveUrl(group: RouteGroup, httpMethod: HttpMethod, url: string, args: var seq[string], kwargs: var Table[string, string]): RouteResult =

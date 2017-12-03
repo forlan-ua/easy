@@ -1,30 +1,30 @@
-import math, strutils, unicode
-import .. / easy
+import math, strutils, unicode, tables
+import .. / .. / easy
 
 type HttpDataValues* = ref object of MiddlewareData
-    data*: TableRef[string, seq[string]]
+    tbl*: TableRef[string, seq[string]]
 
-proc add*(params: HttpDataValues, key: string, values: openarray[string]) =
-    var data = params.data.getOrDefault(key)
+proc add*(vals: HttpDataValues, key: string, values: openarray[string]) =
+    var data = vals.tbl.getOrDefault(key)
     if data.isNil:
         data = @[]
     for value in values:
         data.add(value)
-    params.data[key] = data
-template add*(params: HttpDataValues, key: string, value: string) = 
-    params.add(key, [value])
+    vals.tbl[key] = data
+template add*(vals: HttpDataValues, key: string, value: string) = 
+    vals.add(key, [value])
 
-proc `[]=`*(params: HttpDataValues, key: string, values: openarray[string]) =
+proc `[]=`*(vals: HttpDataValues, key: string, values: openarray[string]) =
     var data: seq[string] = @[]
     for value in values:
         data.add(value)
-    params.data[key] = data
-template `[]=`*(params: HttpDataValues, key: string, value: string) = 
-    params[key] = [value]
+    vals.tbl[key] = data
+template `[]=`*(vals: HttpDataValues, key: string, value: string) = 
+    vals[key] = [value]
     
-proc `[]`*(params: HttpDataValues, key: string): seq[string] =
-    if params.data.hasKey(key):
-        result = params.data[key]
+proc `[]`*(vals: HttpDataValues, key: string): seq[string] =
+    if vals.tbl.hasKey(key):
+        result = vals.tbl[key]
     else:
         result = @[]
 
@@ -35,7 +35,7 @@ proc get*(value: seq[string]): string =
         result = ""
 
 proc newHttpDataValues*[T](): T = 
-    T(data: newTable[string, seq[string]]())
+    T(tbl: newTable[string, seq[string]]())
 
 proc urlencode*(str: string): string =
     result = ""
@@ -45,9 +45,10 @@ proc urlencode*(str: string): string =
         
         if code <= 0x7F:
             if (code >= 48 and code <= 57) or (code >= 65 and code <= 90) or (code >= 97 and code <= 122):
-                result &= $rune
+                result.add($rune)
                 continue
-            result &= "%" & code.toHex(2)
+            result.add('%')
+            result.add(code.toHex(2))
             continue
         elif code <= 0x7FF:
             bytes = 2
@@ -64,8 +65,10 @@ proc urlencode*(str: string): string =
         for i in 1 .. bytes - 1:
             str = "%" & ((code and 0b00111111) or 0b10000000).toHex(2) & str
             code = code shr 6
-
-        result &= "%" & (((2^bytes - 1) shl (8 - bytes)) or code).toHex(2) & str
+        
+        result.add('%')
+        result.add((((2^bytes - 1) shl (8 - bytes)) or code).toHex(2))
+        result.add(str)
 
 proc urldecode*(str: string): string =
     result = ""
@@ -77,7 +80,7 @@ proc urldecode*(str: string): string =
             i += 2
             var firstByte = str[i-1..i].parseHexInt()
             if (firstByte and 0b10000000) == 0:
-                result &= $firstByte.Rune
+                result.add($firstByte.Rune)
             else:
                 var code = 0
                 var mask = 0b01000000
@@ -94,7 +97,7 @@ proc urldecode*(str: string): string =
                     pow.inc
 
                 code = code or ((firstByteMask and firstByte) shl 6*pow)
-                result &= $code.Rune
+                result.add($code.Rune)
         else:
-            result &= ch
+            result.add(ch)
         i.inc
