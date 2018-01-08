@@ -2,7 +2,7 @@ import strutils, times, logging, tables, asyncdispatch, httpcore
 import cookies, strtabs
 
 import .. / .. / easy
-import data
+import .. / utils
 
 const zeroTime* = fromSeconds(0.0)
 const removeTime = fromSeconds(1.0)
@@ -27,7 +27,7 @@ type
         cExpires: Time
         cSecure: bool
         cHttpOnly: bool
-        cMaxAge: uint
+        cMaxAge: int
         cSameSite: CookieSameSite
 
 proc `$`*(c: Cookie, urlencoded: bool = false): string =
@@ -40,7 +40,7 @@ proc `$`*(c: Cookie, urlencoded: bool = false): string =
         path = c.cPath, expires = expires, noName = true, 
         secure = c.cSecure, httpOnly = c.cHttpOnly
     )
-    if c.cMaxAge > 0.uint:
+    if c.cMaxAge > 0:
         result.add("; Max-Age=")
         result.add($c.cMaxAge)
     if c.cSameSite != CookieSameSite.None:
@@ -49,16 +49,16 @@ proc `$`*(c: Cookie, urlencoded: bool = false): string =
 
 proc new*(T: typedesc[Cookie], data: CookiesData, name, value: string, domain: string = "", 
          path: string = "", expires: Time = zeroTime, secure: bool = false,
-         httpOnly: bool = false, maxAge: uint = 0, sameSite: CookieSameSite = CookieSameSite.None): Cookie =
+         httpOnly: bool = false, maxAge: int = -1, sameSite: CookieSameSite = CookieSameSite.None): T =
 
-    Cookie(
+    T(
         data: data,
         cName: name, cValue: value, cDomain: domain, cPath: path, cExpires: expires,
         cSecure: secure, cHttpOnly: httpOnly, cMaxAge: maxAge, cSameSite: sameSite
     )
 
-proc clone*(c: Cookie, name: string = nil): Cookie =
-    Cookie(
+proc copy*[T: Cookie](c: T, name: string = nil): T =
+    T(
         data: c.data, cName: if name.isNil: c.cName else: name,
         cValue: c.cValue, cDomain: c.cDomain, cPath: c.cPath, cExpires: c.cExpires,
         cSecure: c.cSecure, cHttpOnly: c.cHttpOnly, cMaxAge: c.cMaxAge, cSameSite: c.cSameSite
@@ -78,7 +78,7 @@ proc `value=`*(c: Cookie, value: string) =
     if c.data.isNil:
         c.cValue = value
     else:
-        var cookie = c.clone()
+        var cookie = c.copy()
         cookie.cValue = value
         c.data.setCookie(cookie)
 proc domain*(c: Cookie): string = c.cDomain
@@ -86,7 +86,7 @@ proc `domain=`*(c: Cookie, domain: string) =
     if c.data.isNil:
         c.cDomain = domain
     else:
-        var cookie = c.clone()
+        var cookie = c.copy()
         cookie.cDomain = domain
         c.data.setCookie(cookie)
 proc path*(c: Cookie): string = c.cPath
@@ -94,7 +94,7 @@ proc `path=`*(c: Cookie, path: string) =
     if c.data.isNil:
         c.cPath = path
     else:
-        var cookie = c.clone()
+        var cookie = c.copy()
         cookie.cPath = path
         c.data.setCookie(cookie)
 proc expires*(c: Cookie): Time = c.cExpires
@@ -102,7 +102,7 @@ proc `expires=`*(c: Cookie, expires: Time) =
     if c.data.isNil:
         c.cExpires = expires
     else:
-        var cookie = c.clone()
+        var cookie = c.copy()
         cookie.cExpires = expires
         c.data.setCookie(cookie)
 proc secure*(c: Cookie): bool = c.cSecure
@@ -110,7 +110,7 @@ proc `secure=`*(c: Cookie, secure: bool) =
     if c.data.isNil:
         c.cSecure = secure
     else:
-        var cookie = c.clone()
+        var cookie = c.copy()
         cookie.cSecure = secure
         c.data.setCookie(cookie)
 proc httpOnly*(c: Cookie): bool = c.cHttpOnly
@@ -118,15 +118,15 @@ proc `httpOnly=`*(c: Cookie, httpOnly: bool) =
     if c.data.isNil:
         c.cHttpOnly = httpOnly
     else:
-        var cookie = c.clone()
+        var cookie = c.copy()
         cookie.cHttpOnly = httpOnly
         c.data.setCookie(cookie)
-proc maxAge*(c: Cookie): uint = c.cMaxAge
-proc `maxAge=`*(c: Cookie, maxAge: uint) =
+proc maxAge*(c: Cookie): int = c.cMaxAge
+proc `maxAge=`*(c: Cookie, maxAge: int) =
     if c.data.isNil:
         c.cMaxAge = maxAge
     else:
-        var cookie = c.clone()
+        var cookie = c.copy()
         cookie.cMaxAge = maxAge
         c.data.setCookie(cookie)
 proc sameSite*(c: Cookie): CookieSameSite = c.cSameSite
@@ -134,7 +134,7 @@ proc `sameSite=`*(c: Cookie, sameSite: CookieSameSite) =
     if c.data.isNil:
         c.cSameSite = sameSite
     else:
-        var cookie = c.clone()
+        var cookie = c.copy()
         cookie.cSameSite = sameSite
         c.data.setCookie(cookie)
     
@@ -149,7 +149,7 @@ proc delCookie*(d: CookiesData, n: string): CookiesData {.discardable.} =
         cookie.expires = removeTime
     result = d
 
-method onRequest(middleware: CookiesMiddleware, request: HttpRequest, response: HttpResponse) {.async, gcsafe.} = 
+method onRequest*(middleware: CookiesMiddleware, request: HttpRequest, response: HttpResponse) {.async, gcsafe.} = 
     var cookies = CookiesData(
         requestCookies: newTable[string, Cookie](),
         responseCookies: newTable[string, Cookie]()
@@ -162,12 +162,13 @@ method onRequest(middleware: CookiesMiddleware, request: HttpRequest, response: 
     request.setMiddlewareData(cookies)
     response.setMiddlewareData(cookies)
 
-method onRespond(middleware: CookiesMiddleware, response: HttpResponse) {.async, gcsafe.} = 
+method onRespond*(middleware: CookiesMiddleware, response: HttpResponse) {.async, gcsafe.} = 
     let data = response.getMiddlewareData(CookiesData)
+    
+    if not data.isNil:
+        if data.responseCookies.len > 0:
+            for _, cookie in data.responseCookies:
+                response.headers.add("Set-Cookie", `$`(cookie, middleware.urlencoded))
 
-    if data.responseCookies.len > 0:
-        for _, cookie in data.responseCookies:
-            response.headers.add("Set-Cookie", `$`(cookie, middleware.urlencoded))
-
-    data.requestCookies = nil
-    data.responseCookies = nil
+        data.requestCookies = nil
+        data.responseCookies = nil

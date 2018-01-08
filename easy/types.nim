@@ -13,7 +13,7 @@ type
         reuseAddr*: bool
         reusePort*: bool
 
-        bodyMaxSize*: uint32
+        bodyMaxSize*: int
         middlewares*: seq[Middleware]
         port*: Port
         address*: string
@@ -33,9 +33,7 @@ type
         
         contentLength*: int
         body*: string
-        bodyChunkSize*: uint16
-        bodyMaxSize*: uint32
-        bodyFile*: string
+        bodyMaxSize*: int
     
     HttpResponse* = ref object of RootObj
         socket*: AsyncSocket
@@ -144,9 +142,10 @@ proc `$`(statusCode: HttpStatusCode): string =
         else: ""
 
 proc respond*(socket: AsyncSocket, code: HttpCode, content: string, headers: HttpHeaders): Future[void] =
-    let content = if content.len > 0: content else: $code
+    let content = if content.len > 0: content else: $code.HttpStatusCode
+    let status = $code.int & " " & $code.HttpStatusCode
 
-    var msg = "HTTP/1.1 " & $code & "\c\L"
+    var msg = "HTTP/1.1 " & status & "\c\L"
     if headers.len > 0:
         for k, v in headers:
             msg.add(k & ": " & v & "\c\L")

@@ -1,15 +1,16 @@
 import strutils, asyncdispatch
 
 import .. / .. / easy
+import .. / utils
 import data
 export data
 
 type QueryStringMiddleware* = ref object of Middleware
-type QueryStringData* = ref object of HttpDataValues
+type QueryStringData* = ref object of HttpDataValues[string]
 
 
-method onRequest(middleware: QueryStringMiddleware, request: HttpRequest, response: HttpResponse) {.async, gcsafe.} = 
-    var params = newHttpDataValues[QueryStringData]()
+method onRequest*(middleware: QueryStringMiddleware, request: HttpRequest, response: HttpResponse) {.async, gcsafe.} = 
+    var params = newHttpDataValues(QueryStringData)
     var pairs = request.url.query.split('&')
     for pair in pairs:
         let pairs = pair.split('=')

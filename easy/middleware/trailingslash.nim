@@ -7,7 +7,7 @@ type TrailingSlashMiddleware* = ref object of Middleware
 proc new*(T: typedesc[TrailingSlashMiddleware], exists: bool = false): Middleware =
     TrailingSlashMiddleware(exists: exists)
 
-method onInit(middleware: TrailingSlashMiddleware, request: HttpRequest, response: HttpResponse): Future[(HttpRequest, HttpResponse)] {.async, gcsafe.} = 
+method onInit*(middleware: TrailingSlashMiddleware, request: HttpRequest, response: HttpResponse): Future[(HttpRequest, HttpResponse)] {.async, gcsafe.} = 
     let path = request.url.path
     
     if path != "/":

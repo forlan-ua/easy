@@ -1,5 +1,6 @@
+import ospaths
 import easy
-import easy / middleware / [trailingslash, jsondata, querystring, formdata, cookiesdata]
+import easy / middleware / [trailingslash, jsondata, querystring, formdata, cookiesdata, multipartformdata]
 import unicode, strutils, asyncdispatch, httpcore
 import views
 # import articles.articles_urls
@@ -15,7 +16,7 @@ let middlewares = [
     QueryStringMiddleware.new(),
     FormDataMiddleware.new(),
     CookiesMiddleware.new(),
-    # MultipartFormDataMiddleware.new()
+    MultipartFormDataMiddleware.new(getTempDir())
 ]
 server.registerRoutes(urls)
 server.registerMiddlewares(middlewares)

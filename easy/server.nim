@@ -2,7 +2,7 @@ import httpcore, nativesockets, mimetypes, parseutils, strutils, uri, asyncdispa
 import types, routes, middleware, response, request
 
 
-proc new*(T: typedesc[HttpServer], port: int = 5050, address: string = "", bodyMaxSize: uint32 = 1 shl 24): T =
+proc new*(T: typedesc[HttpServer], port: int = 5050, address: string = "", bodyMaxSize: int = 1 shl 24): T =
     T(
         mimeTypes: newMimetypes(),
         port: Port(port),
@@ -28,7 +28,7 @@ proc handle(server: HttpServer, request: HttpRequest, response: HttpResponse) {.
         await middleware.onRequest(request, response)
         if response.interrupted:
             return
-    
+
     try:
         var (listener, args, kwargs) = server.router.resolveUrl(request.httpMethod, request.url.path)
         await listener(request, response, args, kwargs)
@@ -89,24 +89,22 @@ proc processRequest(server: HttpServer, socket: AsyncSocket) {.gcsafe, async.} =
                 try:
                     request = HttpRequest.new(parseEnum[HttpMethod]("http" & linePart), socket, server)
                 except ValueError:
-                    asyncCheck response.code(Http400).close()
+                    waitFor response.code(Http400).close()
                     return
             of 1:
                 try:
                     parseUri(linePart, request.url)
                 except ValueError:
-                    asyncCheck response.code(Http400).close()
+                    waitFor response.code(Http400).close()
                     return
             of 2:
                 try:
                     request.protocol = parseProtocol(linePart)
                 except ValueError:
-                    response.code(Http400)
-                    asyncCheck response.close()
+                    waitFor response.code(Http400).close()
                     return
             else:
-                response.code(Http400)
-                asyncCheck response.close()
+                waitFor response.code(Http400).close()
                 return
         inc i
 
@@ -131,38 +129,38 @@ proc processRequest(server: HttpServer, socket: AsyncSocket) {.gcsafe, async.} =
         request.headers[key] = value
         # Ensure the socket isn't trying to DoS us.
         if request.headers.len > headerLimit:
-            response.code(Http400).send("Bad Request")
-            await response.close()
+            await response.code(Http400).send("Bad Request").close()
             return
 
-    case request.httpMethod:
-        of HttpPost, HttpPut, HttpPatch:
-            # Check for Expect header
-            if request.headers.hasKey("Expect"):
-                if "100-continue" in request.headers["Expect"]:
-                    await response.code(Http100).send("Continue").respond()
-                else:
-                    await response.code(Http417).send("Expectation Failed").close()
-                    return
-
-            if request.headers.hasKey("Content-Length"):
-                if parseSaturatedNatural(request.headers["Content-Length"], request.contentLength) == 0:
-                    await response.code(Http400).send("Bad Request. Invalid Content-Length.").close()
-                    return
-                elif request.contentLength.uint32 > request.bodyMaxSize:
-                    await response.code(Http413).close()
-                    return
-                await request.readBody(response)
-            else:
-                await response.code(Http411).send("Content-Length required.").close()
-                return
-        else:
-            discard
-    
     for middleware in server.middlewares:
         (request, response) = await middleware.onInit(request, response)
         if response.interrupted:
             break
+            
+    if not response.interrupted:
+        case request.httpMethod:
+            of HttpPost, HttpPut, HttpPatch:
+                # Check for Expect header
+                if request.headers.hasKey("Expect"):
+                    if "100-continue" in request.headers["Expect"]:
+                        await response.code(Http100).send("Continue").respond()
+                    else:
+                        await response.code(Http417).send("Expectation Failed").close()
+                        return
+
+                if request.headers.hasKey("Content-Length"):
+                    if parseSaturatedNatural(request.headers["Content-Length"], request.contentLength) == 0:
+                        await response.code(Http400).send("Bad Request. Invalid Content-Length.").close()
+                        return
+                    elif request.contentLength > request.bodyMaxSize:
+                        await response.code(Http413).close()
+                        return
+                    await request.readBody(response)
+                else:
+                    await response.code(Http411).send("Content-Length required.").close()
+                    return
+            else:
+                discard
     
     if not response.interrupted:
         await server.handle(request, response)
@@ -193,7 +191,7 @@ proc serve(server: HttpServer) {.gcsafe, async.} =
     server.socket.bindAddr(server.port, server.address)
     server.socket.listen()
     
-    while true:
+    while not server.closed:
         var fut = await server.socket.acceptAddr()
         asyncCheck processClient(server, fut.client)
 

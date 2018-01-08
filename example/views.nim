@@ -1,12 +1,13 @@
 import tables, asyncdispatch, json
 import easy
-import easy / middleware / [jsondata, querystring, formdata, cookiesdata]
+import easy / middleware / [jsondata, querystring, formdata, cookiesdata, multipartformdata]
 
 
 let indexUrlListener*: UrlListener = proc(request: HttpRequest, response: HttpResponse, args: seq[string], kwargs: Table[string, string]): Future[void] {.async, gcsafe.} =
     var jsonData = response.getMiddlewareData(JsonData).data()
     let queryStringData = request.getMiddlewareData(QueryStringData)
     let formData = request.getMiddlewareData(FormData)
+    let filesFormData = request.getMiddlewareData(FilesFormData)
     let cookiesData = request.getMiddlewareData(CookiesData)
 
     if jsonData.isNil:
@@ -25,6 +26,7 @@ let indexUrlListener*: UrlListener = proc(request: HttpRequest, response: HttpRe
             %*{
                 "queryStringData": if queryStringData.isNil: "" else: $queryStringData.tbl,
                 "formData": if formData.isNil: "" else: $formData.tbl,
+                "filesFormData": if filesFormData.isNil: "" else: $filesFormData.tbl,
                 "requestCookies": $cookiesData.requestCookies,
                 "responseCookies": $cookiesData.responseCookies
             }

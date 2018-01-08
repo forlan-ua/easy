@@ -1,16 +1,17 @@
 import strutils, httpcore, asyncdispatch
 
 import .. / .. / easy
+import .. / utils
 import data
 export data
 
 type FormDataMiddleware* = ref object of Middleware
-type FormData* = ref object of HttpDataValues
+type FormData* = ref object of HttpDataValues[string]
 
 
-method onRequest(middleware: FormDataMiddleware, request: HttpRequest, response: HttpResponse) {.async, gcsafe.} = 
+method onRequest*(middleware: FormDataMiddleware, request: HttpRequest, response: HttpResponse) {.async, gcsafe.} = 
     if request.headers.getOrDefault("Content-Type").find("application/x-www-form-urlencoded") > -1:
-        var params = newHttpDataValues[FormData]()
+        var params = newHttpDataValues(FormData)
         var pairs = request.body.replace("+", "%20").split('&')
         for pair in pairs:
             let pairs = pair.split('=')
