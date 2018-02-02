@@ -29,8 +29,10 @@ proc `[]`*[T](vals: HttpDataValues[T], key: T): seq[T] =
 proc get*[T](value: seq[T]): T =
     if value.len > 0:
         result = value[0]
-    else:
-        result = ""
+
+proc get*[T](vals: HttpDataValues[T], key: T): T =
+    if vals.tbl.hasKey(key):
+        result = vals.tbl[key][0]
 
 proc newHttpDataValues*[V](T: typedesc[HttpDataValues[V]]): T =
     T(tbl: newTable[string, seq[V]]())

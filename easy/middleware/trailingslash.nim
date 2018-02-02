@@ -19,5 +19,8 @@ method onInit*(middleware: TrailingSlashMiddleware, request: HttpRequest, respon
         else:
             if path.endsWith("/"):
                 response.redirect(path[0..path.len-2])
+    else:
+        if not middleware.exists:
+            request.url.path = ""
 
     result = (request, response)

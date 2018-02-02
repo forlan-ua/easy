@@ -1,199 +1,258 @@
-import httpcore, tables, nre, strutils, asyncdispatch, logging, sequtils
+import httpcore, tables, nre, strutils, asyncdispatch, logging, sequtils, algorithm, macros
 import types, response
 
-type RouteResult = tuple[listener: UrlListener, args: seq[string], kwargs: Table[string, string]]
 
-proc new*(T: typedesc[Router]): T = T(namedRoutes: initTable[string, Route]())
+proc new*(T: typedesc[Router]): T = 
+    T(
+        routes: newSeq[Route](), 
+        namedRoutes: initTable[string, seq[string]]()
+    )
 
 
-proc checkReg(reg: string): Regex = 
-    result = re(reg)
+const EOL = '\0'
+const EOP = {'\0', '/'}
+const VAR = ':'
 
-proc url*(reg: string, listener: UrlListener, name: string = ""): Route =
-    Route(reg: checkReg(reg), name: name, listener: listener, multiMethod: true)
 
-proc url*(reg: string, listeners: openarray[(HttpMethod, UrlListener)], name: string = ""): Route =
-    Route(reg: checkReg(reg), name: name, listeners: listeners.toTable(), multiMethod: false)
+proc url*(path: string, listener: UrlListener, name: string = ""): Route =
+    RouteSingle(path: path, name: name, listener: listener, multiMethod: true)
 
-proc url_import*(urls: openarray[Route], namespace: string = ""): RouteGroup =
-    var routes: seq[Route] = @[]
-    result = RouteGroup(name: namespace)
-    for route in urls:
-        route.group = result
-        routes.add(route)
-    result.routes = routes
+proc url*(path: string, listeners: openarray[(HttpMethod, UrlListener)], name: string = ""): Route =
+    RouteSingle(path: path, name: name, listeners: listeners.toTable(), multiMethod: false)
 
-proc url*(reg: string, group: RouteGroup): Route =
-    result = group
-    result.reg = checkReg(reg)
+proc url*(path: string, routes: openarray[Route], namespace: string = ""): Route =
+    RouteGroup(path: path, routes: @routes, namespace: namespace)
 
-proc registerNames(router: Router, group: RouteGroup, prefix: string = "") =
-    for route in group.routes:
-        if route.name != "":
-            if route of RouteGroup:
-                router.registerNames(route.RouteGroup, prefix & route.name & ":")
+var logInst {.compiletime.} = nnkStmtList.newTree()
+
+macro pushLog*(x: untyped): untyped =
+    result = logInst
+
+proc log*(x: NimNode) =
+    logInst.add(
+        nnkCall.newTree(
+            ident("echo"),
+            newLit(treeRepr(x))
+        )
+    )
+let discardNode* {.compiletime.} = nnkDiscardStmt.newTree(newEmptyNode())
+
+proc toUrlArray*(x: NimNode): NimNode =
+    result = nnkBracket.newTree()
+    for i in x:
+        result.add(
+            nnkPar.newTree(
+                i[1][0],
+                nnkCall.newTree(
+                    ident("UrlListener"),
+                    i[1][1]
+                )
+            )
+        )
+
+macro `*`*(x: untyped): untyped =
+    result = x.toUrlArray()
+
+proc httpMethod*(x: NimNode): NimNode =
+    x.expectKind(nnkIdent)
+    let httpMethod = $x.ident
+    try:
+        discard parseEnum[HttpMethod](httpMethod)
+        result = x
+    except:
+        try:
+            result = ident(
+                system.`$`(parseEnum[HttpMethod]("http" & httpMethod))
+            )
+        except:
+            raise newException(ValueError, "Http method should be a member of HttpMethod")
+
+proc toRoute(path: NimNode, listeners: NimNode, name: NimNode): NimNode =
+    result = nnkCall.newTree(
+        ident("url"),
+        path
+    )
+    
+    if listeners[0].kind == nnkCall:
+        var l = nnkBracket.newTree()
+        for i in listeners:
+            if i[0].kind == nnkIdent:
+                l.add(
+                    nnkPar.newTree(
+                        i[0].httpMethod(),
+                        nnkCall.newTree(
+                            ident("UrlListener"),
+                            i[1][0]
+                        )
+                    )
+                )
             else:
-                router.namedRoutes[prefix & route.name] = route
-
-proc registerRoutes*(router: Router, urls: openarray[Route]) =
-    var routes: seq[Route] = @[]
-    routes.add(urls)
-
-    router.defaultGroup = RouteGroup(name: "", routes: routes)
-    router.registerNames(router.defaultGroup)
-
-
-proc splitResults(captures: Captures): tuple[args: seq[string], kwargs: Table[string, string]] =
-    result.kwargs = captures.toTable()
-
-    if result.kwargs.len > 0:
-        var args = captures.toSeq()
-
-        for key_str, key_int in captures.RegexMatch.pattern.captureNameId:
-            args[key_int] = nil
-
-        result.args = filter(args, proc(item: string): bool = not item.isNil)
+                listeners.expectLen(1)
+                l = i
+        result.add(l)
     else:
-        result.args = captures.toSeq()
-    
-    
-proc listener404(request: HttpRequest, response: HttpResponse, args: seq[string], kwargs: Table[string, string]) {.async, gcsafe.} =
-    response.code(Http404).send("Not found")
+        result.add(listeners[0])
+
+    if name.kind != nnkNone:
+        result.add(name)
+
+proc toRoutes(x: NimNode): NimNode =
+    result = nnkBracket.newTree()
+
+    for i in x:
+        case i.kind:
+            of nnkCall:
+                i[0].expectKind(nnkStrLit)
+                result.add(
+                    toRoute(i[0], i[1], newNimNode(nnkNone))
+                )
+            of nnkInfix:
+                assert(i[0].eqIdent("as"))
+                result.add(
+                    toRoute(i[1], i[3], i[2])
+                )
+            else:
+                discard
+
+proc toRoutes(x: NimNode, name: NimNode): NimNode =
+    result = nnkLetSection.newTree(
+        nnkIdentDefs.newTree(
+            nnkPostfix.newTree(
+                ident("*"),
+                name
+            ),
+            newEmptyNode(),
+            toRoutes(x),
+        )
+    )
+
+macro routes*(x: untyped): untyped =
+    result = toRoutes(x, ident("urls"))
+
+macro routes*(name: untyped, x: untyped): untyped =
+    result = toRoutes(x, name)
 
 
-proc resolveUrl(group: RouteGroup, httpMethod: HttpMethod, url: string, args: var seq[string], kwargs: var Table[string, string]): RouteResult =
-    result[0] = listener404
-    for route in group.routes:
-        let res = url.match(route.reg)
-        if res.isNone:
-            continue
-
-        let parts = res.get().captures.splitResults()
-        args.add(parts.args)
-        for key, value in parts.kwargs:
-            kwargs[key] = value
-
+proc addRoute(router: Router, routes: var seq[Route], namespace_prefix: string = "", url_prefix: string = "") =
+    for route in routes:
         if route of RouteGroup:
-            var gurl = url.replace(route.reg, "")
-            if not gurl.startsWith("/"):
-                gurl = "/" & gurl
-            result = route.RouteGroup.resolveUrl(httpMethod, gurl, args, kwargs)
+            let r = route.RouteGroup
+            var p = namespace_prefix
+            if r.namespace.len > 0:
+                if p.len > 0:
+                    p.add(":")
+                p.add(r.namespace)
+            router.addRoute(r.routes, p, url_prefix & r.path)
         else:
-            if route.multiMethod:
-                result = (route.listener, args, kwargs)
-            else:
-                let listener = route.listeners.getOrDefault(httpMethod)
-                if not listener.isNil:
-                    result = (listener, args, kwargs)
+            let r = route.RouteSingle
+            if r.name.len > 0:
+                var n = namespace_prefix
+                if n.len > 0:
+                    n.add(":")
+                n.add(r.name)
+
+                let url = url_prefix & r.path 
+                router.namedRoutes[n] = @[]
+                var i, j, state: int
+                while i < url.len:
+                    if url[i] == ':':
+                        router.namedRoutes[n].add(url[j ..< i])
+                        j = i + 1
+                        state = 1
+                    elif url[i] == '/':
+                        if state == 1:
+                            router.namedRoutes[n].add(url[j ..< i])
+                            state = 0
+                            j = i
+                    i.inc
+                if j != i - 1:
+                    router.namedRoutes[n].add(url[j ..< i])
+
+    routes.sort() do(x, y: Route) -> int:
+        result = cmp(x.path.count({'/'}), y.path.count({'/'}))
+        if result == 0:
+            result = cmp(y of RouteGroup, x of RouteGroup)
 
 
-proc resolveUrl*(router: Router, httpMethod: HttpMethod, url: string): RouteResult =
-    var args = newSeq[string]()
-    var kwargs = initTable[string, string]()
-    result = router.defaultGroup.resolveUrl(httpMethod, url, args, kwargs)
+proc registerRoutes*(router: Router, routes: openarray[Route]) =
+    router.routes = @routes
+    router.namedRoutes.clear()
+    router.addRoute(router.routes)
 
 
-proc newReverseException(name: string, pattern: string = ""): ref Exception =
-    var message = ""
-    if pattern == "":
-        message = "Reverse for `$1` has not been found" % [name]
-    else:
-        let reg = re(pattern)
+proc resolveUrl(routes: seq[Route], url: var string, start: int = 0): (RouteSingle, TableRef[string, string]) {.gcsafe.} =
+    result[1] = newTable[string, string]()
 
-        var keys: seq[string] = @[]
-        for key, _ in reg.captureNameId():
-            keys.add(key)
-        let count = reg.captureCount() - keys.len
-        
-        if count == 0 and keys.len == 0:
-            message = "Some shit happens. Review your regular expressions or report a bug."
-        if count == 0:
-            message = "reverseUrl for `$1` have to has `{$3}` kwargs pair(s)" % [name, keys.join(", ")]
-        elif keys.len == 0:
-            message = "reverseUrl for `$1` have to has $2 args item(s)" % [name, $count]
-        else:
-            message = "reverseUrl for `$1` have to has $2 args item(s) and `{$3}` kwargs pair(s)" % [name, $count, keys.join(", ")]
+    var i, j: int
+    
+    for route in routes:
+        if result[1].len > 0:
+            result[1].clear()
 
-    result = newException(Exception, message)
+        i = start
+        j = 0
 
-proc reverseUrl*(router: Router, name: string, args: seq[string], kwargs: Table[string, string]): string =
-    let route = router.namedRoutes.getOrDefault(name)
+        while route.path[j] != EOL and url[i] != EOL:
+            if route.path[j] == VAR:
+                j.inc
+                let ni = j
+                while route.path[j] notin EOP:
+                    j.inc
+
+                let vi = i
+                while url[i] notin EOP:
+                    i.inc
+
+                if ni != j:
+                    result[1][route.path[ni ..< j]] = if vi != i: url[vi ..< i] else: ""
+                
+                continue
+            elif route.path[j] != url[i]:
+                break
+
+            i.inc
+            j.inc
+                
+        if route.path[j] == EOL:
+            if route of RouteGroup:
+                let (r, kwargs) = route.RouteGroup.routes.resolveUrl(url, i)
+                if not r.isNil:
+                    result[0] = r
+                    for k, v in kwargs:
+                        result[1][k] = v
+                    break
+            elif url[i] == EOL:
+                result[0] = route.RouteSingle
+                break
+
+
+proc resolveUrl*(router: Router, httpMethod: HttpMethod, url: var string): (UrlListener, TableRef[string, string]) {.gcsafe.} =
+    let (route, kwargs) = router.routes.resolveUrl(url)
+    result[1] = kwargs
 
     if not route.isNil:
-        var pattern = route.reg.pattern
-        var group = route.group
-        while not group.isNil:
-            pattern = group.reg.pattern & pattern.strip(trailing = false, chars = {'^'})
-            group = group.group
+        if route.multiMethod:
+            result[0] = route.listener
+        else:
+            result[0] = route.listeners.getOrDefault(httpMethod)
 
-        var url = pattern.strip(trailing = false, chars = {'^'}).strip(leading = false, chars = {'$'}).replace("/?", "/").replace("//", "/")
+    if result[0].isNil:
+        result[1].clear()
+        result[0] = proc(request: HttpRequest, response: HttpResponse) {.async, gcsafe.} =
+            response.code(Http404).send("Not found")
 
+
+proc reverseUrl*(router: Router, namespace: string, kwargs: TableRef[string, string] = nil): string =
+    let parts = router.namedRoutes.getOrDefault(namespace)
+    if not parts.isNil:
         result = ""
-        var i = 0
-        var index = 0
-        while i < url.len:
-            let c = url[i]
-            case c:
-                of '(':
-                    if i == 0 or url[i - 1] != '\\':
-                        i.inc
-                        if url[i] == '?':
-                            i.inc
-                            if url[i] == '<':
-                                var name = ""
-                                i.inc
-                                while url[i] != '>':
-                                    name &= url[i]
-                                    i.inc
-                                if name notin kwargs:
-                                    raise newReverseException(name, pattern)
-                                result &= kwargs[name]
-                            elif url[i] == ':':
-                                warn "Your regular expression `$1` for `$2` is too hard for reverseUrl function. The result can be unexpective." % [pattern, name]
-                                continue
-                        else:
-                            if index >= args.len:
-                                raise newReverseException(name, pattern)
-                            result &= args[index]
-                            index.inc
-                        i.inc
-                        while url[i] != ')' and url[i-1] != '\\': 
-                            i.inc
-                    else:
-                        result &= c
-                of ')':
-                    if i > 0 and url[i - 1] != '\\':
-                        i.inc
-                of '?', '*', '+':
-                    if i > 0 and url[i - 1] != '\\':
-                        warn "Your regular expression `$1` for `$2` is too hard for reverseUrl function. The result can be unexpective." % [pattern, name]
-                        i.inc
-                    else:
-                        result &= c
-                of '.':
-                    warn "Your regular expression `$1` for `$2` is too hard for reverseUrl function. The result can be unexpective." % [pattern, name]
-                    result &= c
-                of '|':
-                    i.inc
-                    if url[i] != '(':
-                        i.inc
-                    else:
-                        i.inc
-                        while url[i] != ')' and url[i-1] != '\\':
-                            i.inc 
-                    warn "Your regular expression `$1` for `$2` is too hard for reverseUrl function. The result can be unexpective." % [pattern, name]
-                else:
-                    result &= c
-            i.inc
-    else:
-        raise newReverseException(name)
-    
+        for i, part in parts:
+            if i mod 2 == 0:
+                result.add(part)
+            else:
+                echo part
+                result.add(kwargs[part])
 
-proc reverseUrl*(server: HttpServer, name: string, args: seq[string], kwargs: Table[string, string]): string = server.router.reverseUrl(name, args, kwargs)
 
-template reverseUrl*(server: HttpServer, name: string, args: seq[string]): string = server.reverseUrl(name, args, initTable[string, string]())
-template reverseUrl*(server: HttpServer, name: string, kwargs: Table[string, string]): string = server.reverseUrl(name, @[], kwargs)
-template reverseUrl*(server: HttpServer, name: string): string = server.reverseUrl(name, @[], initTable[string, string]())
-
-template reverseUrl*(server: HttpServer, name: string, args: seq[string], kwargs: openarray[tuple[key: string, value: string]]): string = server.reverseUrl(name, args, kwargs.toTable())
-template reverseUrl*(server: HttpServer, name: string, kwargs: openarray[tuple[key: string, value: string]]): string = server.reverseUrl(name, @[], kwargs.toTable())
+proc reverseUrl*(router: Router, namespace: string, kwargs: openarray[(string, string)]): string =
+    router.reverseUrl(namespace, kwargs.newTable())

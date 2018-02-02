@@ -2,22 +2,34 @@ import ospaths
 import easy
 import easy / middleware / [trailingslash, jsondata, querystring, formdata, cookiesdata, multipartformdata]
 import unicode, strutils, asyncdispatch, httpcore
-import views
-# import articles.articles_urls
+import index_views
+
+import services / categories / category_urls
+
 
 var server = HttpServer.new()
-let urls = [
-    url("^/path1/path2/path3/path4/path5/test$", indexUrlListener, name="index"),
-    # url("^/article/?", url_import(urlsArticles, namespace="articles"))
-]
+
+
+routes:
+    "":
+        HttpGet: indexUrlListener
+    "/category" as "categories":
+        urlsCategory
+
+
 let middlewares = [
     TrailingSlashMiddleware.new(false),
     JsonMiddleware.new(),
-    QueryStringMiddleware.new(),
-    FormDataMiddleware.new(),
-    CookiesMiddleware.new(),
-    MultipartFormDataMiddleware.new(getTempDir())
+    QueryStringMiddleware.new()
 ]
+
+
 server.registerRoutes(urls)
 server.registerMiddlewares(middlewares)
-server.listen(5050)
+
+echo server.router.routes
+echo server.router.namedRoutes
+echo server.router.reverseUrl("categories:item", {"id": "123"})
+echo server.router.reverseUrl("categories:index")
+
+server.listen(6060)

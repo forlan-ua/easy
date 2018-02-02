@@ -1,4 +1,4 @@
-import httpcore, nativesockets, mimetypes, parseutils, strutils, uri, asyncdispatch, asyncnet
+import httpcore, nativesockets, mimetypes, parseutils, strutils, uri, asyncdispatch, asyncnet, tables
 import types, routes, middleware, response, request
 
 
@@ -17,8 +17,7 @@ proc registerRoutes*(server: HttpServer, routes: openarray[Route]) =
     server.router.registerRoutes(routes)
 
 proc registerMiddlewares*(server: HttpServer, middlewares: openarray[Middleware]) =
-    server.middlewares = @[]
-    server.middlewares.add(middlewares)
+    server.middlewares = @middlewares
 
 proc addMiddleware*(server: HttpServer, middleware: Middleware) =
     server.middlewares.add(middleware)
@@ -30,8 +29,9 @@ proc handle(server: HttpServer, request: HttpRequest, response: HttpResponse) {.
             return
 
     try:
-        var (listener, args, kwargs) = server.router.resolveUrl(request.httpMethod, request.url.path)
-        await listener(request, response, args, kwargs)
+        let (listener, kwargs) = server.router.resolveUrl(request.httpMethod, request.url.path)
+        request.kwargs = kwargs
+        await listener(request, response)
     except:
         response.code(Http500).interrupt()
     if response.interrupted:

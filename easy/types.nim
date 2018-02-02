@@ -1,4 +1,5 @@
-import asyncdispatch, streams, httpcore, mimetypes, tables, nre, uri, asyncnet
+import asyncdispatch, streams, httpcore, mimetypes, tables, uri, asyncnet
+import sequtils, strutils
 
 
 type
@@ -34,6 +35,8 @@ type
         contentLength*: int
         body*: string
         bodyMaxSize*: int
+
+        kwargs*: TableRef[string, string]
     
     HttpResponse* = ref object of RootObj
         socket*: AsyncSocket
@@ -44,23 +47,33 @@ type
         body*: string
         interrupted*: bool
 
-    UrlListener* = proc(request: HttpRequest, response: HttpResponse, args: seq[string], kwargs: Table[string, string]): Future[void] {.gcsafe.}
+    UrlListener* = proc(request: HttpRequest, response: HttpResponse): Future[void] {.gcsafe.}
         
     Router* = ref object of RootObj
-        defaultGroup*: RouteGroup
-        namedRoutes*: Table[string, Route]
+        routes*: seq[Route]
+        namedRoutes*: Table[string, seq[string]]
 
     Route* = ref object of RootObj
-        name*: string
-        reg*: Regex
+        path*: string
         group*: RouteGroup
+
+    RouteSingle* = ref object of Route
+        name*: string
         case multiMethod*: bool:
             of false:
                 listeners*: Table[HttpMethod, UrlListener]
             else:
                 listener*: UrlListener
+    
     RouteGroup* = ref object of Route
+        namespace*: string
         routes*: seq[Route]
+
+proc `$`*(route: Route): string =
+    if route of RouteGroup:
+        result = route.path & "(" & route.RouteGroup.routes.map(proc(x: Route): string = $x).join(", ") & ")"
+    else:
+        result = route.path
 
 proc `$`(statusCode: HttpStatusCode): string =
     case statusCode.int:

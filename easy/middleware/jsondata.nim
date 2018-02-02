@@ -22,7 +22,7 @@ proc send*(response: HttpResponse, jdata: JsonNode): HttpResponse {.discardable.
         data.jdata = jdata
     result = response
 
-method onInit*(middleware: JsonMiddleware, request: HttpRequest, response: HttpResponse): Future[(HttpRequest, HttpResponse)] {.async, gcsafe.} =
+method onRequest*(middleware: JsonMiddleware, request: HttpRequest, response: HttpResponse) {.async, gcsafe.} = 
     let accept = request.headers.getOrDefault("Accept")
     if request.url.path.endsWith(".json") or 
             request.headers.getOrDefault("Content-Type").find("application/json") > -1:
@@ -36,14 +36,15 @@ method onInit*(middleware: JsonMiddleware, request: HttpRequest, response: HttpR
                         response.code(Http400).send("Json parse error").interrupt()
                 else:
                     data = newJObject()
+                echo data
                 request.setMiddlewareData(JsonData(jdata: data))
             else:
+                echo "DISCARD?"
                 discard
         if accept.find("*/*") > -1 or accept.find("application/*") > -1 or accept.find("application/json") > -1:
             response.setMiddlewareData(JsonData(jdata: newJObject()))
     elif accept == "application/json":
         response.setMiddlewareData(JsonData(jdata: newJObject()))
-    result = (request, response)
 
 method onRespond*(middleware: JsonMiddleware, response: HttpResponse) {.async, gcsafe.} =
     var data = response.getMiddlewareData(JsonData).data()

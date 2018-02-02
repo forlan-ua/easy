@@ -1,4 +1,4 @@
 nimcache/
-example/build
+build/
 *.exe
 nakefile

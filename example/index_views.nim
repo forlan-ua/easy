@@ -3,7 +3,9 @@ import easy
 import easy / middleware / [jsondata, querystring, formdata, cookiesdata, multipartformdata]
 
 
-let indexUrlListener*: UrlListener = proc(request: HttpRequest, response: HttpResponse, args: seq[string], kwargs: Table[string, string]): Future[void] {.async, gcsafe.} =
+proc indexUrlListener*(request: HttpRequest, response: HttpResponse): Future[void] {.async, gcsafe.} =
+    echo "KWARGS: ", request.kwargs
+    
     var jsonData = response.getMiddlewareData(JsonData).data()
     let queryStringData = request.getMiddlewareData(QueryStringData)
     let formData = request.getMiddlewareData(FormData)
