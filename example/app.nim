@@ -5,6 +5,7 @@ import unicode, strutils, asyncdispatch, httpcore
 import index_views
 
 import services / categories / category_urls
+import services / developers / developer_urls
 
 
 var server = HttpServer.new()
@@ -15,21 +16,21 @@ routes:
         HttpGet: indexUrlListener
     "/category" as "categories":
         urlsCategory
+    "/developer" as "developers":
+        urlsDeveloper
 
 
 let middlewares = [
     TrailingSlashMiddleware.new(false),
     JsonMiddleware.new(),
-    QueryStringMiddleware.new()
+    QueryStringMiddleware.new(),
+    FormDataMiddleware.new(),
+    CookiesMiddleware.new(),
+    MultipartFormDataMiddleware.new()
 ]
 
 
 server.registerRoutes(urls)
 server.registerMiddlewares(middlewares)
 
-echo server.router.routes
-echo server.router.namedRoutes
-echo server.router.reverseUrl("categories:item", {"id": "123"})
-echo server.router.reverseUrl("categories:index")
-
-server.listen(6060)
+server.listen(9000)

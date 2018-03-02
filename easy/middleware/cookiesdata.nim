@@ -1,11 +1,10 @@
-import strutils, times, logging, tables, asyncdispatch, httpcore
+import strutils, times, logging, tables, asyncdispatch, httpcore, cgi
 import cookies, strtabs
 
 import .. / .. / easy
-import .. / utils
 
-const zeroTime* = fromSeconds(0.0)
-const removeTime = fromSeconds(1.0)
+const zeroTime* = fromUnix(0)
+const removeTime = fromUnix(1)
 
 type CookieSameSite* {.pure.} = enum
     None, Strict, Lax
@@ -32,9 +31,9 @@ type
 
 proc `$`*(c: Cookie, urlencoded: bool = false): string =
     let expires = if c.cExpires != zeroTime: 
-        c.cExpires.getGMTime().format("ddd, dd MMM yyy HH:mm:ss") & " GMT" else: ""
-    let name = if urlencoded: c.cName.urlencode() else: c.cName
-    let value = if urlencoded: c.cValue.urlencode() else: c.cValue
+        c.cExpires.utc().format("ddd, dd MMM yyy HH:mm:ss") & " GMT" else: ""
+    let name = if urlencoded: c.cName.encodeUrl() else: c.cName
+    let value = if urlencoded: c.cValue.encodeUrl() else: c.cValue
     result = setCookie(
         name, value, domain = c.cDomain,
         path = c.cPath, expires = expires, noName = true, 
@@ -156,7 +155,7 @@ method onRequest*(middleware: CookiesMiddleware, request: HttpRequest, response:
     )
     for key, value in request.headers.getOrDefault("Cookie").parseCookies():
         if middleware.urlencoded:
-            cookies.requestCookies[key] = Cookie.new(cookies, key.urldecode(), value.urldecode())
+            cookies.requestCookies[key] = Cookie.new(cookies, key.decodeUrl(), value.decodeUrl())
         else:
             cookies.requestCookies[key] = Cookie.new(cookies, key, value)
     request.setMiddlewareData(cookies)

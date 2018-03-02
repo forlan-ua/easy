@@ -1,4 +1,4 @@
-import httpcore, nativesockets, mimetypes, parseutils, strutils, uri, asyncdispatch, asyncnet, tables
+import httpcore, nativesockets, mimetypes, parseutils, strutils, uri, asyncdispatch, asyncnet, tables, logging
 import types, routes, middleware, response, request
 
 
@@ -33,6 +33,9 @@ proc handle(server: HttpServer, request: HttpRequest, response: HttpResponse) {.
         request.kwargs = kwargs
         await listener(request, response)
     except:
+        let e = getCurrentException()
+        let msg = getCurrentExceptionMsg()
+        error "Got exception ", repr(e), " with message ", msg
         response.code(Http500).interrupt()
     if response.interrupted:
         return
@@ -190,6 +193,8 @@ proc serve(server: HttpServer) {.gcsafe, async.} =
         server.socket.setSockOpt(OptReusePort, true)
     server.socket.bindAddr(server.port, server.address)
     server.socket.listen()
+
+    info "App listening on port ", server.port, "!"
     
     while not server.closed:
         var fut = await server.socket.acceptAddr()
@@ -205,4 +210,4 @@ proc listen*(server: HttpServer, port: int = 0, address: string = "") =
         try:
             waitFor server.serve()
         except:
-            discard
+            error "Server has been shutted down"

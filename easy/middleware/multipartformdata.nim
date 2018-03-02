@@ -1,7 +1,6 @@
-import asyncdispatch, net, asyncnet, httpcore, strutils, parseutils, streams, os, times, random
+import asyncdispatch, net, asyncnet, httpcore, strutils, parseutils, streams, os, times, random, cgi
 
 import .. / .. / easy
-import .. / utils
 import data, formdata
 export data, formdata
 
@@ -145,9 +144,7 @@ proc readFileValue(request: MultipartHttpRequest, data: FilesFormData) {.async.}
         createDir(path)
 
         path.add(DirSep)
-        path.add(rnd)
-        path.add("_")
-        path.add(urlencode(request.curData.filename))
+        path.add(rnd & "_" & request.curData.filename.encodeUrl())
 
         stream = newFileStream(path, fmWrite, 1024)
 

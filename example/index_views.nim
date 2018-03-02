@@ -1,35 +1,6 @@
-import tables, asyncdispatch, json
+import asyncdispatch
 import easy
-import easy / middleware / [jsondata, querystring, formdata, cookiesdata, multipartformdata]
 
 
-proc indexUrlListener*(request: HttpRequest, response: HttpResponse): Future[void] {.async, gcsafe.} =
-    echo "KWARGS: ", request.kwargs
-    
-    var jsonData = response.getMiddlewareData(JsonData).data()
-    let queryStringData = request.getMiddlewareData(QueryStringData)
-    let formData = request.getMiddlewareData(FormData)
-    let filesFormData = request.getMiddlewareData(FilesFormData)
-    let cookiesData = request.getMiddlewareData(CookiesData)
-
-    if jsonData.isNil:
-        if not queryStringData.isNil:
-            response.add($queryStringData.tbl)
-            response.add("\L")
-        if not formData.isNil:
-            response.add($formData.tbl)
-            response.add("\L")
-        response.add($cookiesData.requestCookies)
-        response.add("\L")
-        response.add($cookiesData.responseCookies)
-        response.add("\L")
-    else:
-        response.send(
-            %*{
-                "queryStringData": if queryStringData.isNil: "" else: $queryStringData.tbl,
-                "formData": if formData.isNil: "" else: $formData.tbl,
-                "filesFormData": if filesFormData.isNil: "" else: $filesFormData.tbl,
-                "requestCookies": $cookiesData.requestCookies,
-                "responseCookies": $cookiesData.responseCookies
-            }
-        )
+proc indexUrlListener*(request: HttpRequest, response: HttpResponse) {.async, gcsafe.} =
+    response.send("Hello World")

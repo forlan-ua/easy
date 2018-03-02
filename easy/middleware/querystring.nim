@@ -1,7 +1,6 @@
-import strutils, asyncdispatch, tables
+import strutils, asyncdispatch, tables, cgi, parseutils
 
 import .. / .. / easy
-import .. / utils
 
 import data
 export data
@@ -17,11 +16,11 @@ proc toString*(d: QueryStringData, update: Table[string, seq[string]]): string =
         for k, v in d.tbl:
             if k notin update:
                 for i in v:
-                    result.add(k & "=" & i.urlencode() & "&")
+                    result.add(k.encodeUrl() & "=" & i.encodeUrl() & "&")
     
     for k, v in update:
         for i in v:
-            result.add(k & "=" & i.urlencode() & "&")
+            result.add(k.encodeUrl() & "=" & i.encodeUrl() & "&")
 
     result.setLen(result.len - 1)
 
@@ -35,10 +34,10 @@ proc toString*(d: QueryStringData, update: Table[string, string]): string =
         for k, v in d.tbl:
             if k notin update:
                 for i in v:
-                    result.add(k & "=" & i.urlencode() & "&")
+                    result.add(k.encodeUrl() & "=" & i.encodeUrl() & "&")
     
     for k, i in update:
-        result.add(k & "=" & i.urlencode() & "&")
+        result.add(k.encodeUrl() & "=" & i.encodeUrl() & "&")
 
     result.setLen(result.len - 1)
 
@@ -50,16 +49,18 @@ proc `$`*(d: QueryStringData): string =
     if not d.isNil:
         for k, v in d.tbl:
             for i in v:
-                result.add(k & "=" & i.urlencode() & "&")
+                result.add(k.encodeUrl() & "=" & i.encodeUrl() & "&")
 
     result.setLen(result.len - 1)
 
 
 method onRequest*(middleware: QueryStringMiddleware, request: HttpRequest, response: HttpResponse) {.async, gcsafe.} = 
     var params = newHttpDataValues(QueryStringData)
-    var pairs = request.url.query.split('&')
-    for pair in pairs:
-        let pairs = pair.split('=')
-        let value = if pairs.len > 1: pairs[1].urldecode() else: ""
-        params.add(pairs[0].urldecode(), value)
+    var key, value: string
+    var ind = 0
+    let query = request.url.query
+    while ind < query.len:
+        ind += query.parseUntil(key, '=', ind)
+        ind += query.parseUntil(value, '&', ind + 1) + 1
+        params.add(key.decodeUrl(), value.decodeUrl())
     request.setMiddlewareData(params)
