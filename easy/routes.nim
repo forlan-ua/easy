@@ -117,10 +117,7 @@ proc toRoutes(x: NimNode): NimNode =
 proc toRoutes(x: NimNode, name: NimNode): NimNode =
     result = nnkLetSection.newTree(
         nnkIdentDefs.newTree(
-            nnkPostfix.newTree(
-                ident("*"),
-                name
-            ),
+            name,
             newEmptyNode(),
             toRoutes(x),
         )

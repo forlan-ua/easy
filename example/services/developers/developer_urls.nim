@@ -10,3 +10,5 @@ routes urlsDeveloper:
         HttpGet: retrieveDeveloper
         HttpPut: updateDeveloper
         HttpDelete: deleteDeveloper
+
+export urlsDeveloper

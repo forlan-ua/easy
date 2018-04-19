@@ -10,3 +10,5 @@ routes urlsCategory:
         HttpGet: retrieveCategory
         HttpPut: updateCategory
         HttpDelete: deleteCategory
+
+export urlsCategory

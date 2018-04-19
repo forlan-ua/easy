@@ -1,4 +1,4 @@
-import httpcore, strutils, mimetypes, os, asyncdispatch, streams, asyncnet
+import httpcore, strutils, mimetypes, os, asyncdispatch, streams, asyncnet, asyncfile
 import types, middleware
 
 proc new*(T: typedesc[HttpResponse], socket: AsyncSocket, server: HttpServer): T = 
@@ -36,7 +36,7 @@ proc header*(res: HttpResponse, header: string, value: string): HttpResponse {.d
 proc header*(res: HttpResponse, header: string): string =
     res.headers.getOrDefault(header)
 
-proc headers*(res: HttpResponse, headers: varargs[tuple[name: string, value: string]]): HttpResponse {.discardable.} =
+proc headers*(res: HttpResponse, headers: openarray[tuple[name: string, value: string]]): HttpResponse {.discardable.} =
     for header in headers:
         res.headers[header.name] = header.value
     result = res
@@ -82,3 +82,27 @@ proc respond*(res: HttpResponse) {.async.} =
 proc close*(res: HttpResponse) {.async.} =
     await res.respond()
     res.socket.close()
+
+proc sendFile*(res: HttpResponse, file: string, cacheControl: string = "public, max-age=31536000") {.async.} =
+    if not file.fileExists():
+        res.code(404)
+        await res.respond()
+        return
+
+    let mimetype = res.server.mimeTypes.getMimetype(file.splitFile().ext[1 .. ^1], default = "application/octet-stream")
+
+    res.header("Content-Type", mimetype)
+    res.header("Cache-Control", cacheControl)
+
+    var fileStream = newFutureStream[string]("sendFile")
+    var file = openAsync(file, fmRead)
+    
+    asyncCheck file.readToStream(fileStream)
+    
+    while true:
+        let (hasValue, value) = await fileStream.read()
+        if hasValue:
+            await res.socket.send(value)
+        else:
+            break
+    file.close()
