@@ -62,7 +62,7 @@ proc respondHeaders(res: HttpResponse) {.async.} =
     if res.headers != nil:
         for k, v in res.headers:
             msg.add(k & ": " & v & "\c\L")
-    msg.add("\c\L\c\L")
+    msg.add("\c\L")
 
     result = res.socket.send(msg)
 
