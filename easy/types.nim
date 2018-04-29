@@ -46,6 +46,7 @@ type
         middlewareData*: seq[MiddlewareData]
         body*: string
         interrupted*: bool
+        sent*: bool
 
     UrlListener* = proc(request: HttpRequest, response: HttpResponse): Future[void] {.gcsafe.}
         

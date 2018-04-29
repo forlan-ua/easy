@@ -11,16 +11,16 @@ type StaticFilesMiddleware* = ref object of Middleware
 
 
 proc new*(T: typedesc[StaticFilesMiddleware], staticRoute: string, staticDirs: openarray[string], timeout: int = 3600): Middleware =
-    StaticFilesMiddleware(staticRoutes: @[staticRoute], staticDirs: staticDirs.map(proc(s: string): string = s.strip('/', leading=false)), timeout: timeout)
+    StaticFilesMiddleware(staticRoutes: @[staticRoute], staticDirs: staticDirs.map(proc(s: string): string = s.strip(chars={'/'}, leading=false)), timeout: timeout)
 
 
 proc new*(T: typedesc[StaticFilesMiddleware], staticRoutes: openarray[string], staticDirs: openarray[string], timeout: int = 3600): Middleware =
-    StaticFilesMiddleware(staticRoutes: @staticRoutes, staticDirs: staticDirs.map(proc(s: string): string = s.strip('/', leading=false)), timeout: timeout)
+    StaticFilesMiddleware(staticRoutes: @staticRoutes, staticDirs: staticDirs.map(proc(s: string): string = s.strip(chars={'/'}, leading=false)), timeout: timeout)
 
 
 var staticRegistry {.threadvar.}: TableRef[string, (string, int)]
 method sendFileImpl*(middleware: StaticFilesMiddleware, request: HttpRequest, response: HttpResponse, filename: string) {.gcsafe, async, base.} =
-    let oldsha = request.headers["If-None-Match", 0]
+    let oldsha = $request.headers.getOrDefault("If-None-Match")
     let mimetype = response.server.mimeTypes.getMimetype(filename.splitFile().ext[1 .. ^1], default = "application/octet-stream")
     let cacheControl = "public, max-age=" & $middleware.timeout
 
@@ -49,7 +49,7 @@ method sendFileImpl*(middleware: StaticFilesMiddleware, request: HttpRequest, re
 
         await response.sendFile(filename, cacheControl)
         return
-    
+
     let content = readFile(filename)
     let sha = sha1hexdigest(content)
     staticRegistry[filename] = (sha, now)
@@ -62,6 +62,7 @@ method sendFileImpl*(middleware: StaticFilesMiddleware, request: HttpRequest, re
         return
     
     response.send(content)
+    await response.respond()
 
 
 method clearCache*(middleware: StaticFilesMiddleware) {.base.} =
@@ -72,16 +73,16 @@ method onInit*(middleware: StaticFilesMiddleware, request: HttpRequest, response
     let path = request.url.path
     
     if request.httpMethod == HttpGet:
-        var filename: string
         block findfile:
             for route in middleware.staticRoutes:
-                if path.startsWith(path):
+                if path.startsWith(route):
                     response.interrupt()
 
                     for dir in middleware.staticDirs:
-                        let fn = dir & path
+                        let fn = dir & path.substr(route.len)
+
                         if fileExists(fn):
-                            await middleware.sendFileImpl(request, response, filename)
+                            await middleware.sendFileImpl(request, response, fn)
                             break findfile
 
                     response.code(404)

@@ -52,16 +52,8 @@ proc redirect*(res: HttpResponse, url: string, permanent: bool = true) =
 
 template mimeTypes*(res: HttpResponse): MimeDB = res.server.mimeTypes
 
-proc respond*(res: HttpResponse) {.async.} =
+proc respondHeaders(res: HttpResponse) {.async.} =
     let code = res.code().HttpStatusCode
-
-    if res.body == "":
-        res.body = $code
-
-    var i = res.server.middlewares.high
-    while i > -1:
-        await res.server.middlewares[i].onRespond(res)
-        i.dec
 
     var msg = "HTTP/1.1 "
     msg.add($code.int & " " & $code)
@@ -70,29 +62,51 @@ proc respond*(res: HttpResponse) {.async.} =
     if res.headers != nil:
         for k, v in res.headers:
             msg.add(k & ": " & v & "\c\L")
-
-    msg.add("Content-Length: ")
-    # this particular way saves allocations:
-    msg.add(res.body.len)
     msg.add("\c\L\c\L")
-    msg.add(res.body)
 
     result = res.socket.send(msg)
+
+proc respond*(res: HttpResponse) {.async.} =
+    if res.sent:
+        return
+    res.sent = true
+
+    let code = res.code().HttpStatusCode
+
+    var i = res.server.middlewares.high
+    while i > -1:
+        await res.server.middlewares[i].onRespond(res)
+        i.dec
+
+    if res.body == "" and code.int != 200:
+        res.body = $code
+
+    res.header("Content-Length", $res.body.len)
+
+    await res.respondHeaders()
+    result = res.socket.send(res.body)
 
 proc close*(res: HttpResponse) {.async.} =
     await res.respond()
     res.socket.close()
 
 proc sendFile*(res: HttpResponse, file: string, cacheControl: string = "public, max-age=31536000") {.async.} =
+    if res.sent:
+        return
+    res.sent = true
+
     if not file.fileExists():
         res.code(404)
         await res.respond()
         return
-
+    
     let mimetype = res.server.mimeTypes.getMimetype(file.splitFile().ext[1 .. ^1], default = "application/octet-stream")
 
     res.header("Content-Type", mimetype)
     res.header("Cache-Control", cacheControl)
+    res.header("Content-Length", $file.getFileSize())
+
+    await res.respondHeaders()
 
     var fileStream = newFutureStream[string]("sendFile")
     var file = openAsync(file, fmRead)
