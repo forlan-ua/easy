@@ -1,4 +1,4 @@
-import httpcore, strutils, mimetypes, os, asyncdispatch, streams, asyncnet, asyncfile
+import httpcore, strutils, mimetypes, os, asyncdispatch, streams, asyncnet, asyncfile, logging
 import types, middleware
 
 proc new*(T: typedesc[HttpResponse], socket: AsyncSocket, server: HttpServer): T = 
@@ -68,6 +68,7 @@ proc respondHeaders(res: HttpResponse) {.async.} =
 
 proc respond*(res: HttpResponse) {.async.} =
     if res.sent:
+        warn "Response has been already responded. Skip."
         return
     res.sent = true
 
@@ -92,6 +93,7 @@ proc close*(res: HttpResponse) {.async.} =
 
 proc sendFile*(res: HttpResponse, file: string, cacheControl: string = "public, max-age=31536000") {.async.} =
     if res.sent:
+        warn "Response has been already responded. Skip."
         return
     res.sent = true
 

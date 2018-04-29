@@ -167,7 +167,8 @@ proc processRequest(server: HttpServer, socket: AsyncSocket) {.gcsafe, async.} =
     
     if not response.interrupted:
         await server.handle(request, response)
-    await response.respond()
+    if not response.sent:
+        await response.respond()
 
     if "upgrade" in request.headers.getOrDefault("connection"):
         return
